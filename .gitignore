@@ -1,0 +1,25 @@
+# Config files (may contain credentials)
+config.json
+*.config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Temp files
+*.tmp
+*.temp
+*.epub
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
