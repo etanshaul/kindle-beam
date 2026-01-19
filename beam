@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""
+beam - Send files to Kindle from the command line.
+Supports: .txt, .md, .markdown, .pdf
+"""
+
+import argparse
+import os
+import sys
+import json
+import tempfile
+import subprocess
+import smtplib
+import re
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
+from pathlib import Path
+
+CONFIG_PATH = os.path.expanduser("~/.config/kindle-beam/config.json")
+
+SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf"}
+
+
+def load_config():
+    """Load configuration from config file."""
+    if not os.path.exists(CONFIG_PATH):
+        print(f"Error: Config file not found: {CONFIG_PATH}", file=sys.stderr)
+        print("Create it with: smtp_user, smtp_pass, kindle_email", file=sys.stderr)
+        sys.exit(1)
+
+    with open(CONFIG_PATH, "r") as f:
+        config = json.load(f)
+
+    required = ["smtp_user", "smtp_pass", "kindle_email"]
+    missing = [k for k in required if k not in config]
+    if missing:
+        print(f"Error: Missing config keys: {', '.join(missing)}", file=sys.stderr)
+        sys.exit(1)
+
+    return config
+
+
+def convert_to_epub(input_path, title, output_path):
+    """Convert text/markdown to EPUB using pandoc."""
+    cmd = [
+        "pandoc",
+        input_path,
+        "-o", output_path,
+        "--standalone",
+        "-t", "epub",
+        f"--metadata=title:{title}",
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"pandoc failed: {result.stderr}")
+
+
+def send_to_kindle(config, file_path, title, is_pdf=False):
+    """Send file to Kindle via Gmail SMTP."""
+    msg = MIMEMultipart()
+    msg["From"] = config["smtp_user"]
+    msg["To"] = config["kindle_email"]
+    msg["Subject"] = title
+
+    msg.attach(MIMEText("Sent via Kindle Beam", "plain"))
+
+    with open(file_path, "rb") as f:
+        if is_pdf:
+            part = MIMEBase("application", "pdf")
+            ext = ".pdf"
+        else:
+            part = MIMEBase("application", "epub+zip")
+            ext = ".epub"
+
+        part.set_payload(f.read())
+        encoders.encode_base64(part)
+
+        safe_title = re.sub(r'[^\w\s-]', '', title)[:50].strip()
+        filename = f"{safe_title}{ext}"
+
+        part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+        msg.attach(part)
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(config["smtp_user"], config["smtp_pass"])
+        server.send_message(msg)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Send files to Kindle",
+        usage="beam FILE [--title TITLE]"
+    )
+    parser.add_argument("file", help="File to send (.txt, .md, .markdown, .pdf)")
+    parser.add_argument("--title", "-t", help="Book title (defaults to filename)")
+    args = parser.parse_args()
+
+    file_path = os.path.abspath(args.file)
+
+    if not os.path.exists(file_path):
+        print(f"Error: File not found: {file_path}", file=sys.stderr)
+        sys.exit(1)
+
+    ext = Path(file_path).suffix.lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        print(f"Error: Unsupported file type: {ext}", file=sys.stderr)
+        print(f"Supported: {', '.join(SUPPORTED_EXTENSIONS)}", file=sys.stderr)
+        sys.exit(1)
+
+    title = args.title or Path(file_path).stem
+
+    config = load_config()
+
+    print(f"Sending '{title}' to Kindle...")
+
+    temp_epub = None
+    try:
+        if ext == ".pdf":
+            send_to_kindle(config, file_path, title, is_pdf=True)
+        else:
+            temp_epub = tempfile.mktemp(suffix=".epub", prefix="beam_")
+            convert_to_epub(file_path, title, temp_epub)
+            send_to_kindle(config, temp_epub, title, is_pdf=False)
+
+        print("Done! Check your Kindle in a few minutes.")
+
+    except subprocess.TimeoutExpired:
+        print("Error: pandoc timed out - file may be too large", file=sys.stderr)
+        sys.exit(1)
+    except smtplib.SMTPAuthenticationError:
+        print("Error: SMTP auth failed - check your App Password", file=sys.stderr)
+        sys.exit(1)
+    except smtplib.SMTPException as e:
+        print(f"Error: Email failed: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        if temp_epub and os.path.exists(temp_epub):
+            os.remove(temp_epub)
+
+
+if __name__ == "__main__":
+    main()
