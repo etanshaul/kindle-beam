@@ -66,11 +66,27 @@ Edit `~/.config/kindle-beam/config.json`:
 
 ## Usage
 
+### Chrome Extension
+
 1. Navigate to any article
 2. Click the Kindle Beam extension icon
 3. Edit the title if needed
 4. Click "Beam to Kindle"
 5. Article arrives on your Kindle in 1-5 minutes
+
+### CLI
+
+Send files to your Kindle directly from the terminal:
+
+```bash
+beam file.pdf
+beam article.md
+beam notes.txt --title "My Notes"
+```
+
+Supported formats: `.txt`, `.md`, `.markdown`, `.pdf`
+
+PDFs are sent as-is. Text and markdown files are converted to EPUB via pandoc before sending.
 
 ## Troubleshooting
 
